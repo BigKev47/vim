@@ -1,0 +1,719 @@
+"
+" Filename: creamrc
+" Updated:  2006-10-27 07:14:16EDT
+"
+" Cream -- An easy-to-use configuration of the famous Vim text editor
+" [ http://cream.sourceforge.net ] Copyright (C) 2001-2011 Steve Hall
+"
+" License
+" GNU General Public License (GPL) {{{1
+"
+" This program is free software; you can redistribute it and/or modify
+" it under the terms of the GNU General Public License as published by
+" the Free Software Foundation; either version 3 of the License, or
+" (at your option) any later version. [
+" http://www.gnu.org/licenses/gpl.html ]
+"
+" This program is distributed in the hope that it will be useful, but
+" WITHOUT ANY WARRANTY; without even the implied warranty of
+" MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+" General Public License for more details.
+"
+" You should have received a copy of the GNU General Public License
+" along with this program; if not, write to the Free Software
+" Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+" 02111-1307, USA.
+"
+" 1}}}
+"
+
+" CRITICAL SETTINGS: (Don't use fold markers yet!)
+
+" nocompatible (behave like Vim, not Vi)
+set nocompatible
+
+" cpoptions (exclude characters from literal mappings)
+set cpoptions-=<
+
+" shellslash (use a common path separator across all platforms)
+" convert all backslashes to forward slashes on expanding filenames.
+" Enables consistancy in Cream between Windows and Linux platforms,
+" but BE CAREFUL! Windows file operations require backslashes--any
+" paths determined manually (not by Vim) need to be reversed.
+set shellslash
+
+" TODO: version check
+if v:version < 700
+	echo "Cream now supports only Vim 7.0 and above. Please use Cream 0.38 for older Vim versions."
+	finish
+endif
+
+let s:debug = "\n  INITIALIZATION:\n\n"
+
+" Cream_checkdir() {{{1
+function! Cream_checkdir(dir)
+" if directory doesn't exist, try to make it
+
+let s:debug = s:debug . "Cream_checkdir(): {dir} == \"" . a:dir . "\"\n"
+
+	if !isdirectory(a:dir)
+
+		let tmp = a:dir
+
+		" system call prep
+		if has("win32")
+			" remove trailing slash (Win95)
+			let tmp = substitute(tmp, '\(\\\|/\)$', '', 'g')
+			" remove escaped spaces
+			let tmp = substitute(tmp, '\ ', ' ', 'g')
+			" convert slashes to backslashes
+			let tmp = substitute(tmp, '/', '\', 'g')
+let s:debug = s:debug . "Cream_checkdir(): has(win32)\n"
+		endif
+
+		" mkdir (quote, regardless of spaces)
+		set noshellslash
+let s:debug = s:debug . "Cream_checkdir(): mkdir \"" . tmp . "\"\n"
+		call system("mkdir " . '"' . tmp . '"')
+let s:debug = s:debug . "Cream_checkdir(): mkdir   v:shell_error == \"" . v:shell_error . "\"\n"
+		set shellslash
+
+		" retest
+		if !isdirectory(tmp)
+			return -1
+		endif
+
+	endif
+
+	return 1
+
+endfunction
+
+" path initializations
+" Cream_init() ($CREAM)   $VIMRUNTIME/cream {{{1
+function! Cream_init()
+" establish $CREAM
+" o Valid value is writable:
+"   * $HOME/.cream in Linux
+"   * $VIMRUNTIME/cream/  in Windows
+" o $HOME on Windows is trouble
+"   * Doesn't exist for Win95/98/ME
+"   * May not be multi-user on WinNT/2K/XP and Cygwin setups
+" o We don't escape the value of $CREAM, since its value might be used
+"   in a shell call
+
+	" use $CREAM if present
+	if exists("$CREAM")
+
+		" accept as is
+
+let s:debug = s:debug . "Cream_init(): $CREAM exists: \n  $CREAM = " . $CREAM . "\n"
+
+	" use $VIMINIT fragment if present
+	elseif exists("$VIMINIT")
+
+let s:debug = s:debug . "Cream_init(): $VIMINIT exists.\n"
+
+		" set $CREAM to a subdirectory below *this* file
+		" remove initial 'source '
+		let $CREAM = strpart($VIMINIT, 7)
+		" if first 7 chars don't equal "source ", quit
+		if strpart($VIMINIT, 0, 7) !=? "source "
+			echo "---------------------------------------------------------------------"
+			echo " WARNING! First 7 chars of $VIMINIT isn't \"source \""
+			echo "   $VIMINIT = " . $VIMINIT
+			echo "   $CREAM   = " . $CREAM
+			echo "---------------------------------------------------------------------"
+			let $CREAM = ""
+let s:debug = s:debug . "Cream_init(): $VIMINIT first seven chars don't match.\n"
+			return -1
+		endif
+		" expand full path, minus filename head
+		"let $CREAM = fnamemodify(expand($VIMINIT), ":p:h")
+		let $CREAM = fnamemodify(expand($CREAM), ":p:h")
+		" add cream sub-directory
+		if     filewritable($CREAM . "/cream") == 2
+			let $CREAM = $CREAM . "/cream/"
+		elseif filewritable($CREAM . "/.cream") == 2
+			let $CREAM = $CREAM . "/.cream/"
+		else
+			" error?
+		endif
+
+let s:debug = s:debug . "Cream_init(): $CREAM: " . $CREAM . "\n"
+
+	" defaults
+	else
+
+		" convert all backslashes to forward slashes on Windows
+		if has("win32")
+
+			let $CREAM = $VIMRUNTIME . "/cream/"
+			" get rid of path spaces
+			if v:version >= 602
+				let $CREAM = fnamemodify($CREAM, ":8")
+			endif
+			" change backslashes to slashes
+			let $CREAM = substitute($CREAM, '\', '/', "g")
+			" fix UNC servername
+			let $CREAM = substitute($CREAM, '^//', '\\', "g")
+
+			""*** DEBUG: fallback
+			"if filewritable($CREAM) != 2
+			"    let $CREAM = $VIMRUNTIME . "/cream/"
+			"endif
+			""***
+let s:debug = s:debug . "Cream_init(): (no envvars): has(win32):\n  $CREAM = " . $CREAM . "\n"
+
+		else
+			let $CREAM = $VIMRUNTIME . "/cream/"
+let s:debug = s:debug . "Cream_init(): (no envvars): !has(win32): \n  $CREAM = " . $CREAM . "\n"
+		endif
+
+	endif
+
+	" return error if $CREAM doesn't exist
+	if !exists("$CREAM")
+let s:debug = s:debug . "Cream_init(): no $CREAM discovered.\n"
+		return -1
+	endif
+
+	" ensure trailing slash
+	if $CREAM !~ '/$' && $CREAM !~ '\$'
+		if has("win32") || has("dos32") || has("win16") || has("dos16") || has("win95")
+			let $CREAM = $CREAM . '\'
+		else
+			let $CREAM = $CREAM . '/'
+		endif
+	endif
+
+endfunction
+
+" Cream_init_userdir()    ~/.cream {{{1
+function! Cream_init_userdir()
+" Set g:cream_user by finding or creating a location for user files.
+
+	let mydir = ""
+	let s:debug = s:debug . "Cream_init_userdir(): begin...\n"
+
+	" environment var
+	if exists("$CREAM_USER")
+		if s:Cream_init_userdir_try($CREAM_USER)
+			let s:debug = s:debug . "Cream_init_userdir(): using $CREAM_USER.\n"
+		else
+			echo "    $CREAM_USER not a valid pathfor user files failed, trying defaults..."
+		endif
+	endif
+
+	if has("win32")
+		" <0.38 migration: We test if $HOMEDRIVE$HOMEPATH exists
+		" BEFORE attempting to create it. If it does NOT exist, we try
+		" $USERPROFILE before coming back to try it again.
+"		if     s:Cream_init_userdir_try(fnamemodify($HOMEDRIVE . $HOMEPATH, ":p"))
+		let mydir = fnamemodify($HOMEDRIVE . $HOMEPATH, ":p") . "/.cream"
+		if isdirectory(mydir) 
+		\ && filewritable(mydir) == 2 
+		\ && s:Cream_init_userdir_try(fnamemodify($HOMEDRIVE . $HOMEPATH, ":p"))
+				let s:debug = s:debug . "Cream_init_userdir(): has(win32): $HOMEDRIVE and $HOMEPATH used.\n"
+
+		elseif     s:Cream_init_userdir_try(fnamemodify($USERPROFILE, ":p"))
+			let s:debug = s:debug . "Cream_init_userdir(): has(win32): $USERPROFILE used.\n"
+		elseif  s:Cream_init_userdir_try(fnamemodify($HOMEDRIVE . $HOMEPATH, ":p"))
+			let s:debug = s:debug . "Cream_init_userdir(): has(win32): $HOMEDRIVE and $HOMEPATH used.\n"
+		" Vim always discovers $HOME, even on Win95 without one declared!!
+		elseif s:Cream_init_userdir_try(fnamemodify($HOME, ":p"))
+			let s:debug = s:debug . "Cream_init_userdir(): has(win32): $HOME used.\n"
+		" fallback (Win95)
+		elseif s:Cream_init_userdir_try(fnamemodify($CREAM, ":p"))
+			let s:debug = s:debug . "Cream_init_userdir(): has(win32): $CREAM used.\n"
+		else
+			" fails by here
+		endif
+	else
+		call s:Cream_init_userdir_try($HOME)
+		let s:debug = s:debug . "Cream_init_userdir(): !has(win32): $HOME used.\n"
+	endif
+
+	" verify
+	if !exists("g:cream_user")
+		let s:debug = s:debug . "ERROR: Cream_init_userdir(): g:cream_user not found.\n\n"
+		return -1
+	elseif filewritable(g:cream_user) != 2
+		let s:debug = s:debug . "ERROR: Cream_init_userdir(): g:cream_user (\"" . g:cream_user . "\") path not writable.\n\n"
+		return -1
+	else
+		let s:debug = s:debug . "Cream_init_userdir(): g:cream_user == \"" . g:cream_user . "\"\n"
+	endif
+
+endfunction
+
+" s:Cream_init_userdir_try() {{{1
+function! s:Cream_init_userdir_try(path)
+" Test {path} exists, process, create/use /.cream/ sub if so.
+
+	" stop if already defined
+	if exists("g:cream_user")
+		let s:debug = s:debug . "  s:Cream_init_userdir_try(): g:cream_user already exists, skipping \"" . a:path . "\".\n"
+		return
+	endif
+
+	" test root path
+	if filewritable(a:path) == 2
+		let s:debug = s:debug . "  s:Cream_init_userdir_try(): tested \"" . a:path . "\" exists and writable.\n"
+	elseif isdirectory(a:path)
+		let s:debug = s:debug . "  s:Cream_init_userdir_try(): tested \"" . a:path . "\" exists, but not writable.\n"
+		return
+	else
+		let s:debug = s:debug . "  s:Cream_init_userdir_try(): tested \"" . a:path . "\" doesn't exist.\n"
+		return
+	endif
+
+	let mydir = a:path
+
+	" process
+	" simplify if possible
+	if has("win32")
+		if v:version >= 602
+			let mydir = fnamemodify(mydir, ":8")
+			let s:debug = s:debug . "  s:Cream_init_userdir_try(): has(win32): fnamemodify(mydir, \":8\") == \"" . mydir . "\"\n"
+		endif
+	endif
+	" remove trailing slash (such as Win95 "C:\")
+	let mydir = substitute(mydir, '\(\\\|/\)$', '', 'g')
+
+	" add .cream/ and try to make it
+	let mydir = mydir . '/.cream/'
+	if !Cream_checkdir(mydir)
+		let s:debug = s:debug . "  s:Cream_init_userdir_try(): processed and \"/.cream/\" appended path \"" . mydir . "\" not made.\n"
+		return
+	endif
+
+	" process g:cream_user to Vim format
+	let g:cream_user = mydir
+	if has("win32")
+		" convert backslashes to slashes
+		let g:cream_user = escape(substitute(g:cream_user, '\', '/', 'g'), ' \')
+		" escape any spaces or backslashes remaining
+		let g:cream_user = escape(g:cream_user, ' \')
+	endif
+
+	let s:debug = s:debug . "  s:Cream_init_userdir_try(): g:cream_user set to \"" . g:cream_user . "\"\n"
+	return 1
+
+endfunction
+
+" Cream_init_viewdir()    ~/.cream/views {{{1
+function! Cream_init_viewdir()
+" file view retainage
+
+	if exists("$CREAM_VIEW")
+	\&& filewritable($CREAM_VIEW) == 2
+
+		execute "set viewdir=" . escape($CREAM_VIEW, ' \')
+let s:debug = s:debug . "Cream_init_viewdir(): good $CREAM_VIEW found: &viewdir: " . &viewdir . "\n"
+
+	" default
+	else
+
+		" (remember, g:cream_user is simplified and escaped)
+		let mydir = g:cream_user . "views"
+
+let s:debug = s:debug . "Cream_init_viewdir(): no $CREAM_VIEW found: mydir: " . mydir . "\n"
+
+		" if directory doesn't exist, try to make it
+		call Cream_checkdir(mydir)
+
+		if filewritable(mydir) == 2
+			" we set a script global, only so viminfo (following) can
+			" use it
+			let s:cream_views = mydir
+			execute "set viewdir=" . mydir
+let s:debug = s:debug . "Cream_init_viewdir(): no $CREAM_VIEW found: &viewdir: " . &viewdir . "\n"
+
+		else
+			" failure
+let s:debug = s:debug . "Cream_init_viewdir(): no $CREAM_VIEW found: mydir not writable.\n"
+			return -1
+		endif
+
+	endif
+
+endfunction
+
+" Cream_init_viminfo()    ~/.cream/views {{{1
+function! Cream_init_viminfo()
+" setting/history/etc. file location
+
+	" execute statement (everything but path)
+	" \"100 escaped twice: once for itself, once for the quote
+	let myviminfo = "set viminfo='500,\\\"100,%,!,h,n"
+
+	" $CREAM_VIEW
+	if exists("$CREAM_VIEW")
+	\&& filewritable($CREAM_VIEW) == 2
+
+		execute myviminfo . escape($CREAM_VIEW, ' \') . "/.viminfo"
+
+	" default
+	else
+
+		execute myviminfo . s:cream_views . "/.viminfo"
+
+	endif
+
+	" must exist (directory has already been tested and is writable)
+
+endfunction
+
+" Cream_init_spelldicts() ~/.cream/spelldicts {{{1
+function! Cream_init_spelldicts()
+" backup file location
+
+	" (remember, g:cream_user is simplified and escaped)
+	let mydir = g:cream_user . "spelldicts"
+
+	" if directory doesn't exist, try to make it
+	call Cream_checkdir(mydir)
+
+	if filewritable(mydir) != 2
+let s:debug = s:debug . "Cream_init_spelldicts(): directory not made: mydir: " . mydir . "\n"
+		return -1
+	endif
+
+endfunction
+
+" Cream_init_backupdir()  ~/.cream/tmp {{{1
+function! Cream_init_backupdir()
+" backup file location
+
+	let prior = ""
+
+	" $CREAM_BAK (environmental variable)
+	if exists("$CREAM_BAK")
+	\&& filewritable($CREAM_BAK) == 2
+
+		let prior = $CREAM_BAK
+let s:debug = s:debug . "Cream_init_backupdir(): good $CREAM_BAK: prior: " . prior . "\n"
+
+	" default
+	else
+
+
+		" (remember, g:cream_user is simplified and escaped)
+		let mydir = g:cream_user . "tmp"
+
+let s:debug = s:debug . "Cream_init_backupdir(): no $CREAM_BAK: mydir: " . mydir . "\n"
+
+		" if directory doesn't exist, try to make it
+		call Cream_checkdir(mydir)
+
+		if filewritable(mydir) != 2
+let s:debug = s:debug . "Cream_init_backupdir(): mydir not writable: mydir: " . mydir . "\n"
+			return -1
+		else
+			let prior = mydir
+		endif
+
+	endif
+
+	" append comma to default if non-empty
+	if prior != ""
+		let prior = prior . ","
+	endif
+
+	" set
+	execute "set backupdir=" . prior . "./bak,."
+
+endfunction
+
+" Cream_init_directory()  ./  (swap files) {{{1
+function! Cream_init_directory()
+" swap file location
+" (Always with file to avoid overwritten by second user)
+
+	if exists("$CREAM_SWP")
+	\&& filewritable($CREAM_SWP) == 2
+		" use variable
+		execute "set directory=" . $CREAM_SWP . ",."
+let s:debug = s:debug . "Cream_init_directory(): $CREAM_SWP found: &directory: " . &directory . "\n"
+	else
+		execute "set directory=."
+let s:debug = s:debug . "Cream_init_directory(): no $CREAM_SWP: &directory: " . &directory . "\n"
+	endif
+
+endfunction
+
+" 1}}}
+" loader
+" Cream() {{{1
+function! Cream()
+" load the project
+" * return 1 on load, -1 on fatal error, 2 on terminal abort
+
+	" initialize (once--note behave module may try again ;)
+	if !exists("g:cream_init")
+
+		" $CREAM
+		let init = Cream_init()
+let s:debug = s:debug . "Cream(): Cream_init(): init: " . init . "\n\n"
+		if init == -1
+			echo "\n Error: Unable to find Cream installation.\n"
+			return -1
+		endif
+
+		"" vi behavior should stop here (but still can't read globals)
+		"if exists("g:CREAM_BEHAVE")
+		"    if g:CREAM_BEHAVE ==? "vi"
+		"        return 1
+		"    endif
+		"endif
+
+		" g:cream_user
+		let init = Cream_init_userdir()
+let s:debug = s:debug . "Cream(): Cream_init_userdir() == " . init . "\n\n"
+		if init == -1
+			echo "\n Error: Unable to find a location for user files.\n"
+			return -1
+		endif
+
+		" &viewdir
+		let init = Cream_init_viewdir()
+let s:debug = s:debug . "Cream(): Cream_init_viewdir(): init: " . init . "\n\n"
+		if init == -1
+			echo "\n Error: Unable to find a location for view files.\n"
+			return -1
+		endif
+
+		" spelldicts
+		let init = Cream_init_spelldicts()
+let s:debug = s:debug . "Cream(): Cream_init_spelldicts(): init: " . init . "\n\n"
+		if init == -1
+			echo "\n Error: Unable to find a location for spell dictionaries.\n"
+			return -1
+		endif
+
+		" these are automatic
+		call Cream_init_viminfo()
+		call Cream_init_backupdir()
+		call Cream_init_directory()
+		let g:cream_init = 1
+
+	endif
+
+	""*** BROKEN: vim behavior should stop here, but still can't read
+	""            globals so it doesn't.
+	"if exists("g:CREAM_BEHAVE")
+	"    if g:CREAM_BEHAVE ==? "vim"
+	"        return 1
+	"    endif
+	"endif
+	""***
+
+""*** DEBUG:
+"" as loading...
+"echo "---------------------------------------------------------------------"
+"echo " DEBUG: "
+"echo "   $VIMINIT    = " . $VIMINIT
+"echo "   $CREAM      = " . $CREAM
+"echo "   &viewdir    = " . &viewdir
+"echo "   &viminfo    = " . &viminfo
+"echo "   &backupdir  = " . &backupdir
+"echo "   &directory  = " . &directory
+"echo "---------------------------------------------------------------------"
+"
+"" one line paste-in
+"echo "\n $CREAM = " . $CREAM . "\n &viewdir = " . &viewdir . "\n &viminfo = " . &viminfo . "\n &backupdir = " . &backupdir . "\n &directory = " . &directory . "\n"
+"
+""***
+
+let s:debug = s:debug . "Cream():\n"
+let s:debug = s:debug . "   $VIMINIT    = " . $VIMINIT . "\n"
+let s:debug = s:debug . "   $CREAM      = " . $CREAM . "\n"
+let s:debug = s:debug . "   &viewdir    = " . &viewdir . "\n"
+let s:debug = s:debug . "   &viminfo    = " . &viminfo . "\n"
+let s:debug = s:debug . "   &backupdir  = " . &backupdir . "\n"
+let s:debug = s:debug . "   &directory  = " . &directory . "\n"
+
+	" load the loader
+
+" *** Note: Uncomment this line to abort loading ***
+"finish
+
+	if filereadable($CREAM . "cream.vim") > 0
+let s:debug = s:debug . "Cream(): loader found.\n"
+		execute "source " . $CREAM . "cream.vim"
+	else
+let s:debug = s:debug . "Cream(): loader not found.\n"
+		echo "\n Error: Unable to find Cream loader.\n"
+		return -1
+	endif
+
+	return 1
+
+endfunction
+
+" 1}}}
+" debugging
+" Cream_debug_info_local() {{{1
+function! Cream_debug_info_local()
+" modularize Cream debug info
+	return s:debug
+endfunction
+
+	" Cream_debug_info() {{{1
+function! Cream_debug_info()
+" Return system, Vim and Cream info.
+
+	call confirm(
+		\ "Debugging Cream startup. This may take a few seconds...\n" .
+		\ "\n", "&Ok", 1, "Info")
+	
+	" utility functions
+	function! <SID>CheckDir(n)
+		if isdirectory(a:n)
+			echo 'directory "' . a:n . '" exists'
+		else
+			echo 'directory "' . a:n . '" does NOT exist'
+		endif
+	endfunction
+	function! <SID>CheckFile(n)
+		if filereadable(a:n)
+			echo '"' . a:n . '" is readable'
+		else
+			echo '"' . a:n . '" is NOT readable'
+		endif
+	endfunction
+
+	" collect initialization debugging info, too.
+	let tmp = Cream_debug_info_local()
+	let tmp = tmp . "\n  POST INITIALIZATION:\n"
+
+	" Cream debug info on @x (silent call this to avoid echo)
+    silent call s:Cream_debug_info_get()
+    let tmp = tmp . @x
+    let @x = ""
+
+	delfunction <SID>CheckDir
+	delfunction <SID>CheckFile
+
+	return tmp
+
+endfunction
+
+" s:Cream_debug_info_get() {{{1
+function! s:Cream_debug_info_get()
+" Place Cream debug info into @x.
+" Note: This value is placed in register rather than returned 
+"       so that it isn't echoed by the calling function.
+
+	let @x = ""
+	redir @x
+
+	let mymore = &more
+	set nomore
+
+	echo "Report generated: " . strftime("%Y-%m-%dT%H:%M:%S")
+
+	" system info
+	echo "\nSystem Info ----------------------------------------------------- {{" . nr2char(123) . "1\n"
+	if has("unix")
+		echo system("uname -a")
+	endif
+
+    let myshellslash = &shellslash
+    set noshellslash
+	silent! echo system("set")
+    let &shellslash = myshellslash
+
+	" vim version info
+	echo "\nVersion --------------------------------------------------------- {{" . nr2char(123) . "1\n"
+	version
+
+	" current session arguments
+	echo "\nArguments ------------------------------------------------------- {{" . nr2char(123) . "1\n"
+	args
+
+	" paths, files and directories
+	echo "\nDirectories and Files ------------------------------------------- {{" . nr2char(123) . "1\n"
+	echo '$VIM = "' . $VIM . '"'
+	call <SID>CheckDir($VIM)
+	echo '$VIMRUNTIME = "' . $VIMRUNTIME . '"'
+	call <SID>CheckDir($VIMRUNTIME)
+	call <SID>CheckFile(&helpfile)
+	call <SID>CheckFile(fnamemodify(&helpfile, ":h") . "/tags")
+	call <SID>CheckFile($VIMRUNTIME . "/menu.vim")
+	call <SID>CheckFile($VIMRUNTIME . "/filetype.vim")
+	call <SID>CheckFile($VIMRUNTIME . "/syntax/synload.vim")
+
+	" settings
+	echo "\nSettings -------------------------------------------------------- {{" . nr2char(123) . "1\n"
+	set all
+	set termcap
+
+	" autocommands
+	if has("autocmd")
+		echo "\nAutocommands ------------------------------------------------ {{" . nr2char(123) . "1\n"
+		autocmd
+	endif
+
+	" mappings
+	echo "\nMappings -------------------------------------------------------- {{" . nr2char(123) . "1\n"
+	echo "\nNormal mode mappings -------------------------------------------- {{" . nr2char(123) . "2\n"
+	nmap
+	echo "\nVisual mode mappings -------------------------------------------- {{" . nr2char(123) . "2\n"
+	vmap
+	echo "\nInsert mode mappings -------------------------------------------- {{" . nr2char(123) . "2\n"
+	imap
+	echo "\nCommand-line mode mappings -------------------------------------- {{" . nr2char(123) . "2\n"
+	cmap
+	echo "\n  2}}" . nr2char(125) . "\n"
+
+	" abbreviations
+	echo "\nAbbreviations --------------------------------------------------- {{" . nr2char(123) . "1\n"
+	abbreviate
+
+	" highlighting
+	echo "\nHighlighting ---------------------------------------------------- {{" . nr2char(123) . "1\n"
+	highlight
+
+	" variables
+	echo "\nVariables ------------------------------------------------------- {{" . nr2char(123) . "1\n"
+	let
+
+	" Cream info
+	echo "\nCream ----------------------------------------------------------- {{" . nr2char(123) . "1\n"
+	if exists("g:cream_version") | echo "g:cream_version = " . g:cream_version | else | echo "no g:cream_version" | endif
+	if exists("g:cream_version_str") | echo "g:cream_version_str = " . g:cream_version_str | else | echo "no g:cream_version_str" | endif
+	if exists("g:cream_updated") | echo "g:cream_updated = " . g:cream_updated | else | echo "no g:cream_updated" | endif
+    if exists("g:cream_dev") | echo "g:cream_dev = " . g:cream_dev | else | echo "no g:cream_dev" | endif
+	if exists("g:cream_mail") | echo "g:cream_mail = " . g:cream_mail | else | echo "no g:cream_mail" | endif
+
+	echo "\n$VIM/*"
+	echo globpath($VIM, "*")
+
+	echo "\n$VIMRUNTIME/*"
+	echo globpath($VIMRUNTIME, "*")
+
+	echo "\n$CREAM/*"
+	echo globpath($CREAM, "*")
+	echo "\n$CREAM/addons/*"
+	echo globpath($CREAM, "addons/*")
+	echo "\n$CREAM/bitmaps/*"
+	echo globpath($CREAM, "bitmaps/*")
+
+	echo "\n  1}}" . nr2char(125) . "\n"
+	echo "\n  vim:foldmethod=marker\n"
+	redir END
+
+	let &more = mymore
+
+    " Note: @x contains this function's return value info at this
+    " point. (See header note for explanation.)
+
+endfunction
+
+" 1}}}
+
+call Cream()
+
+" vim:filetype=vim:foldmethod=marker
